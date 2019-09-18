@@ -15,7 +15,7 @@ def subsequent_mask(size):
 	""
 	attn_shape = (1, size, size)
 	subsequent_mask = np.triu(np.ones(attn_shape), k=1).astype('uint8')
-	return torch.form_numpy(subsequent_mask) == 0
+	return torch.from_numpy(subsequent_mask) == 0
 
 def attention(query, key, value, mask=None, dropout=None):
 	""
@@ -248,6 +248,7 @@ def make_model(src_vocab, tgt_vocab, N=6,
 			nn.init.xavier_uniform(p)
 	return model
 
-tmp_model = make_model(10, 10, 2)
-print(tmp_model)
+if __name__ == "__main__":
+	tmp_model = make_model(10, 10, 2)
+	print(tmp_model)
 	
