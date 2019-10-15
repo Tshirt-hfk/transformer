@@ -272,12 +272,12 @@ class Generator(nn.Module):
         return F.log_softmax(self.proj(x), dim=-1)
 
 
-def make_model(src_vocab, tgt_vocab, N=6,
+def make_model(src_vocab, tgt_vocab, N=3,
                d_model=512, d_ff=2048, h=4, dropout=0.1):
     "Helper: Construct a model from hyperparameters."
     c = copy.deepcopy
-    # attn = MultiHeadedAttention(h, d_model)
-    attn = MyMultiHeadedAttention(h, d_model)
+    attn = MultiHeadedAttention(h, d_model)
+    # attn = MyMultiHeadedAttention(h, d_model)
     ff = PositionwiseFeedForward(d_model, d_ff, dropout)
     position = PositionalEncoding(d_model, dropout)
     model = EncoderDecoder(

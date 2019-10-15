@@ -28,19 +28,22 @@ class Batch:
 
 def run_epoch(data_iter, model, loss_compute):
 	""
+	cuda_gpu = torch.cuda.is_available()
+	if (cuda_gpu):
+		net = torch.nn.DataParallel(model).cuda()
 	start = time.time()
 	total_tokens = 0
 	total_loss = 0
 	tokens = 0
 	for i, batch in enumerate(data_iter):
-		out = model.forward(batch.src, batch.trg,
-						batch.src_mask, batch.trg_mask)
-		loss = loss_compute(out, batch.trg_y, batch.ntokens)
+		out = model.forward(batch.src.cuda(), batch.trg.cuda(),
+						batch.src_mask.cuda(), batch.trg_mask.cuda())
+		loss = loss_compute(out, batch.trg_y.cuda(), batch.ntokens.cuda())
 		total_loss += loss
 		tokens += batch.ntokens
-		if i%50 == 1:
+		if i % 50 == 1:
 			elapsed = time.time() - start
-			print(i,loss/ batch.ntokens,tokens /torch.tensor(elapsed))
+			print(i, loss / batch.ntokens, tokens / torch.tensor(elapsed))
 			print("Epoch Step: %d Loss: %f Tokens per Sec: %f" %
 				(i, loss/batch.ntokens, tokens/torch.tensor(elapsed)))
 			start = time.time()
