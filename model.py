@@ -23,7 +23,9 @@ def subsequent_mask(size):
 
 def attention(query, key, value, mask=None, dropout=None):
     d_k = query.size(-1)
+    # print(query.size(), key.size())
     scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
+
     if mask is not None:
         scores = scores.masked_fill(mask == 0, -1e9)
     p_attn = F.softmax(scores, dim=-1)
@@ -67,7 +69,7 @@ class MyMultiHeadedAttention(nn.Module):
         self.h = h
         self.d_model = d_model
         self.linears = clones(nn.Linear(d_model, d_model * h), 3)
-        self.lineaes_p = clones(nn.Linear(d_model, d_model), 3)
+        self.linears_p = clones(nn.Linear(d_model, d_model), 3)
         self.attn = None
         self.attn_p = None
         self.dropout = nn.Dropout(p=dropout)
@@ -77,25 +79,27 @@ class MyMultiHeadedAttention(nn.Module):
             mask = mask.unsqueeze(1)
         nbatches = query.size(0)
 
-        query, key, value = \
+        query_x, key_x, value_x = \
             [l(x).view(nbatches, -1, self.h, self.d_model).transpose(1, 2)
              for l, x in zip(self.linears, (query, key, value))]
         # x (b, h, l, d_model)
-        x, self.attn = attention(query, key, value, mask=mask,
+
+        x, self.attn = attention(query_x, key_x, value_x, mask=mask,
                                  dropout=self.dropout)
         # predict
         query_p, key_p, value_p = \
             [l(x).view(nbatches, -1, 1, self.d_model).transpose(1, 2)
              for l, x in zip(self.linears_p, (query, key, value))]
-        mask_p = torch.from_numpy(np.eye(self.d_model, self.d_model)) \
-                     .unsqueeze(0).unsqueeze(0).expand(nbatches, 1, self.d_model, self.d_model) == 0
+        mask_p = torch.from_numpy(np.eye(query_p.size(2), query_p.size(2), dtype="uint8")) == 0
+
         # x (b, 1, l, d_model)
-        x_p, self.attn_p = attention(query_p, key_p, value_p, mask=mask_p,
+        x_p, self.attn_p = attention(query_p, key_p, value_p, mask=mask_p.cuda(),
                                      dropout=self.dropout)
         # compute similarity
         # dis (b, l, h, 1)
         dis = torch.sum((x - x_p.expand(-1, self.h, -1, -1))**2, dim=3).unsqueeze(3).transpose(1, 2)
-        output = torch.matmul(F.softmax(1/(dis+1e-9), dim=2).transpose(-1, -2), x.transpose(1, 2)).unsqueeze(-2)
+        output = torch.matmul(F.softmax(1/(dis+1e-9), dim=2).transpose(-1, -2), x.transpose(1, 2)).squeeze(-2)
+
         return output
 
 
@@ -272,17 +276,17 @@ class Generator(nn.Module):
         return F.log_softmax(self.proj(x), dim=-1)
 
 
-def make_model(src_vocab, tgt_vocab, N=3,
-               d_model=512, d_ff=2048, h=4, dropout=0.1):
+def make_model(src_vocab, tgt_vocab, N=6,
+               d_model=512, d_ff=2048, h=8, dropout=0.1):
     "Helper: Construct a model from hyperparameters."
     c = copy.deepcopy
-    attn = MultiHeadedAttention(h, d_model)
-    # attn = MyMultiHeadedAttention(h, d_model)
+    attn1 = MultiHeadedAttention(h, d_model)
+    attn = MyMultiHeadedAttention(h, d_model)
     ff = PositionwiseFeedForward(d_model, d_ff, dropout)
     position = PositionalEncoding(d_model, dropout)
     model = EncoderDecoder(
         Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout), N),
-        Decoder(DecoderLayer(d_model, c(attn), c(attn),
+        Decoder(DecoderLayer(d_model, c(attn1), c(attn1),
                              c(ff), dropout), N),
         nn.Sequential(Embeddings(d_model, src_vocab), c(position)),
         nn.Sequential(Embeddings(d_model, tgt_vocab), c(position)),
