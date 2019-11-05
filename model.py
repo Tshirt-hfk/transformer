@@ -6,11 +6,6 @@ import math, copy, time
 from torch.autograd import Variable
 
 
-# import matplotlib.pyplot as plt
-
-
-# import seaborn
-
 def clones(module, N):
     return nn.ModuleList(copy.deepcopy(module) for _ in range(N))
 
@@ -24,8 +19,10 @@ def subsequent_mask(size):
 def attention(query, key, value, mask=None, dropout=None):
     d_k = query.size(-1)
     # print(query.size(), key.size())
+    # scores (b, h, v, v)
+    # print(query.size())
     scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
-
+    # print(scores.size(), mask.size())
     if mask is not None:
         scores = scores.masked_fill(mask == 0, -1e9)
     p_attn = F.softmax(scores, dim=-1)
@@ -45,7 +42,7 @@ class MultiHeadedAttention(nn.Module):
         self.attn = None
         self.dropout = nn.Dropout(p=dropout)
 
-    def forward(self, query, key, value, mask=None):
+    def forward(self, query, key, value, mask=None, mask_p=None):
         if mask is not None:
             mask = mask.unsqueeze(1)
         nbatches = query.size(0)
@@ -74,33 +71,54 @@ class MyMultiHeadedAttention(nn.Module):
         self.attn_p = None
         self.dropout = nn.Dropout(p=dropout)
 
-    def forward(self, query, key, value, mask=None):
+    def forward(self, query, key, value, mask=None, mask_p=None):
         if mask is not None:
             mask = mask.unsqueeze(1)
+        if mask_p is not None:
+            mask_p = mask_p.unsqueeze(1)
+
         nbatches = query.size(0)
 
         query_x, key_x, value_x = \
             [l(x).view(nbatches, -1, self.h, self.d_model).transpose(1, 2)
              for l, x in zip(self.linears, (query, key, value))]
-        # x (b, h, l, d_model)
-
+        # x (b, h, v, d_model)
         x, self.attn = attention(query_x, key_x, value_x, mask=mask,
                                  dropout=self.dropout)
         # predict
         query_p, key_p, value_p = \
             [l(x).view(nbatches, -1, 1, self.d_model).transpose(1, 2)
              for l, x in zip(self.linears_p, (query, key, value))]
-        mask_p = torch.from_numpy(np.eye(query_p.size(2), query_p.size(2), dtype="uint8")) == 0
+        # mask_p = torch.from_numpy(np.eye(query_p.size(2), query_p.size(2), dtype="uint8")) == 0
 
-        # x (b, 1, l, d_model)
-        x_p, self.attn_p = attention(query_p, key_p, value_p, mask=mask_p.cuda(),
+        # x (b, 1, h, d_model)
+        x_p, self.attn_p = attention(query_p, key_p, value_p, mask=mask_p,
                                      dropout=self.dropout)
         # compute similarity
-        # dis (b, l, h, 1)
+        # dis (b, l, h)
         dis = torch.sum((x - x_p.expand(-1, self.h, -1, -1))**2, dim=3).unsqueeze(3).transpose(1, 2)
         output = torch.matmul(F.softmax(1/(dis+1e-9), dim=2).transpose(-1, -2), x.transpose(1, 2)).squeeze(-2)
+        # print(output.size(), x_p.size())
+        return output*0.8+x_p.squeeze(1)*0.2
 
-        return output
+class MultiWayAttention(nn.Module):
+    def __init__(self, h, d_model, dropout=0.1):
+        super(MultiWayAttention, self).__init__()
+        self.ways = clones(MultiHeadedAttention(h, d_model, dropout), 2)
+        self.pred = MultiHeadedAttention(h, d_model, dropout)
+
+    def forward(self, query, key, value, mask=None, mask_p=None):
+        # xs (b, w, l, d_model)
+        xs = torch.stack([l(query, key, value, mask, None) for l in self.ways], 1)
+        # x_p (b, l, d_model)
+        x_p = self.pred(query, key, value, mask_p, None)
+        # dis (b, l, w, 1)
+        dis = torch.sum((xs-x_p.unsqueeze(1).expand(-1, 2, -1, -1))**2, dim=3).unsqueeze(3).transpose(1, 2)
+        print(xs.size(), x_p.size(), dis.size())
+        output = torch.matmul(F.softmax(1/(dis+1e-9), dim=2).transpose(-1, -2), xs.transpose(1, 2)).squeeze(-2)
+        # output (b, l ,d_model)
+        print(output.size())
+        return output * 0.9 + x_p.squeeze(1) * 0.1
 
 
 class PositionwiseFeedForward(nn.Module):
@@ -186,9 +204,9 @@ class Encoder(nn.Module):
         self.layers = clones(layer, N)
         self.norm = LayerNorm(layer.size)
 
-    def forward(self, x, mask):
+    def forward(self, x, mask, mask_p):
         for layer in self.layers:
-            x = layer(x, mask)
+            x = layer(x, mask, mask_p)
         return self.norm(x)
 
 
@@ -202,9 +220,9 @@ class EncoderLayer(nn.Module):
         self.sublayer = clones(SublayerConnection(size, dropout), 2)
         self.size = size
 
-    def forward(self, x, mask):
+    def forward(self, x, mask, mask_p):
         ""
-        x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, mask))
+        x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, mask, mask_p))
         return self.sublayer[1](x, self.feed_forward)
 
 
@@ -253,13 +271,13 @@ class EncoderDecoder(nn.Module):
         self.tgt_embed = tgt_embed
         self.generator = generator
 
-    def forward(self, src, tgt, src_mask, tgt_mask):
-        "Take in and process masked src and target sequences."
-        return self.decode(self.encode(src, src_mask), src_mask,
+    def forward(self, src, tgt, src_mask, src_mask_p, tgt_mask):
+        """Take in and process masked src and target sequences."""
+        return self.decode(self.encode(src, src_mask, src_mask_p), src_mask,
                            tgt, tgt_mask)
 
-    def encode(self, src, src_mask):
-        return self.encoder(self.src_embed(src), src_mask)
+    def encode(self, src, src_mask, src_mask_p):
+        return self.encoder(self.src_embed(src), src_mask, src_mask_p)
 
     def decode(self, memory, src_mask, tgt, tgt_mask):
         return self.decoder(self.tgt_embed(tgt), memory, src_mask, tgt_mask)
@@ -297,6 +315,47 @@ def make_model(src_vocab, tgt_vocab, N=6,
             nn.init.xavier_uniform(p)
     return model
 
+def make_model_1(src_vocab, tgt_vocab, N=6,
+               d_model=512, d_ff=2048, h=8, dropout=0.1):
+    "Helper: Construct a model from hyperparameters."
+    c = copy.deepcopy
+    attn = MultiHeadedAttention(h, d_model)
+    # attn = MyMultiHeadedAttention(h, d_model)
+    ff = PositionwiseFeedForward(d_model, d_ff, dropout)
+    position = PositionalEncoding(d_model, dropout)
+    model = EncoderDecoder(
+        Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout), N),
+        Decoder(DecoderLayer(d_model, c(attn), c(attn),
+                             c(ff), dropout), N),
+        nn.Sequential(Embeddings(d_model, src_vocab), c(position)),
+        nn.Sequential(Embeddings(d_model, tgt_vocab), c(position)),
+        Generator(d_model, tgt_vocab)
+    )
+    for p in model.parameters():
+        if p.dim() > 1:
+            nn.init.xavier_uniform(p)
+    return model
+
+def make_model_2(src_vocab, tgt_vocab, N=6,
+               d_model=512, d_ff=2048, h=8, dropout=0.1):
+    "Helper: Construct a model from hyperparameters."
+    c = copy.deepcopy
+    attn = MultiHeadedAttention(h, d_model)
+    attn1 = MultiWayAttention(h, d_model)
+    ff = PositionwiseFeedForward(d_model, d_ff, dropout)
+    position = PositionalEncoding(d_model, dropout)
+    model = EncoderDecoder(
+        Encoder(EncoderLayer(d_model, c(attn1), c(ff), dropout), N),
+        Decoder(DecoderLayer(d_model, c(attn), c(attn),
+                             c(ff), dropout), N),
+        nn.Sequential(Embeddings(d_model, src_vocab), c(position)),
+        nn.Sequential(Embeddings(d_model, tgt_vocab), c(position)),
+        Generator(d_model, tgt_vocab)
+    )
+    for p in model.parameters():
+        if p.dim() > 1:
+            nn.init.xavier_uniform(p)
+    return model
 
 if __name__ == "__main__":
     tmp_model = make_model(10, 10, 2)

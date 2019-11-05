@@ -8,11 +8,12 @@ from model import subsequent_mask
 
 
 class Batch:
-    ""
+    """"""
 
     def __init__(self, src, trg=None, pad=0):
         self.src = src
         self.src_mask = (src != pad).unsqueeze(-2)
+        self.src_mask_p = self.make_mask_p(src, pad)
         if trg is not None:
             self.trg = trg[:, :-1]
             self.trg_y = trg[:, 1:]
@@ -21,29 +22,38 @@ class Batch:
 
     @staticmethod
     def make_std_mask(tgt, pad):
-        ""
+        """"""
         tgt_mask = (tgt != pad).unsqueeze(-2)
         tgt_mask = tgt_mask & Variable(
             subsequent_mask(tgt.size(-1)).type_as(tgt_mask.data))
         return tgt_mask
 
+    @staticmethod
+    def make_mask_p(src, pad):
+        src_mask_p = (src != pad).unsqueeze(-2)
+        src_mask_p = src_mask_p & Variable(
+            (torch.from_numpy(np.eye(src.size(-1), src.size(-1), dtype="uint8")) == 0)
+                .unsqueeze(0).type_as(src_mask_p.data))
+        return src_mask_p
+
 
 def run_epoch(data_iter, model, loss_compute):
-    ""
+    """"""
     start = time.time()
     total_tokens = 0
     total_loss = 0
     tokens = 0
     for i, batch in enumerate(data_iter):
+        # print(i, batch.src.size(), batch.trg.size(), batch.src_mask.size(), batch.src_mask_p.size(), batch.trg_mask.size())
+        # print(batch.src[-1], batch.trg[-1], batch.src_mask[-1], batch.src_mask_p[-1], batch.trg_mask[-1])
         out = model.forward(batch.src, batch.trg,
-                            batch.src_mask, batch.trg_mask)
+                            batch.src_mask, batch.src_mask_p, batch.trg_mask)
         loss = loss_compute(out, batch.trg_y, batch.ntokens)
         total_loss += loss
         tokens += batch.ntokens
         total_tokens += batch.ntokens
-        if i % 50 == 1:
+        if i % 100 == 0:
             elapsed = time.time() - start
-            # print(i, loss / batch.ntokens, tokens / torch.tensor(elapsed))
             print("Epoch Step: %d Loss: %f Tokens per Sec: %f" %
                   (i, loss / batch.ntokens, tokens / torch.tensor(elapsed)))
             start = time.time()
@@ -55,7 +65,7 @@ global max_src_in_batch, max_tgt_in_batch
 
 
 def batch_size_fn(new, count, sofar):
-    "Keep augmenting batch and calculate total number of tokens + padding."
+    """Keep augmenting batch and calculate total number of tokens + padding."""
     global max_src_in_batch, max_tgt_in_batch
     if count == 1:
         max_src_in_batch = 0
@@ -68,7 +78,7 @@ def batch_size_fn(new, count, sofar):
 
 
 class NoamOpt:
-    "Optim wrapper that implements rate."
+    """Optim wrapper that implements rate."""
 
     def __init__(self, model_size, factor, warmup, optimizer):
         self.optimizer = optimizer
@@ -88,7 +98,7 @@ class NoamOpt:
         self.optimizer.step()
 
     def rate(self, step=None):
-        "Implement `lrate` above"
+        """Implement `lrate` above"""
         if step is None:
             step = self._step
         return self.factor * \
@@ -102,7 +112,7 @@ def get_std_opt(model):
 
 
 class LabelSmoothing(nn.Module):
-    "Implement label smoothing."
+    """Implement label smoothing."""
 
     def __init__(self, size, padding_idx, smoothing=0.0):
         super(LabelSmoothing, self).__init__()
