@@ -114,10 +114,10 @@ class MultiWayAttention(nn.Module):
         x_p = self.pred(query, key, value, mask_p, None)
         # dis (b, l, w, 1)
         dis = torch.sum((xs-x_p.unsqueeze(1).expand(-1, 2, -1, -1))**2, dim=3).unsqueeze(3).transpose(1, 2)
-        print(xs.size(), x_p.size(), dis.size())
+        # print(xs.size(), x_p.size(), dis.size())
         output = torch.matmul(F.softmax(1/(dis+1e-9), dim=2).transpose(-1, -2), xs.transpose(1, 2)).squeeze(-2)
         # output (b, l ,d_model)
-        print(output.size())
+        # print(output.size())
         return output * 0.9 + x_p.squeeze(1) * 0.1
 
 
