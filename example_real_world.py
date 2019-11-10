@@ -9,6 +9,8 @@ from model import make_model, subsequent_mask, make_model_1, make_model_2
 
 from training import LabelSmoothing, batch_size_fn, Batch, NoamOpt, run_epoch
 
+# from torch.utils.checkpoint import checkpoint_sequential
+
 if True:
     import spacy
 
@@ -70,13 +72,13 @@ def rebatch(pad_idx, batch):
 if True:
     pad_idx = TGT.vocab.stoi["<blank>"]
     if False:
-        model = torch.load("./models_1/239.pkl")
+        model = torch.load("./models_1/276.pkl")
     else:
-        model = make_model_2(len(SRC.vocab), len(TGT.vocab), N=4, h=8)
+        model = make_model(len(SRC.vocab), len(TGT.vocab), N=4, h=8)
     model.cuda()
     criterion = LabelSmoothing(size=len(TGT.vocab), padding_idx=pad_idx, smoothing=0.1)
     criterion.cuda()
-    BATCH_SIZE = 600
+    BATCH_SIZE = 900
     train_iter = MyIterator(train, batch_size=BATCH_SIZE, device=torch.device(0),
                             repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
                             batch_size_fn=batch_size_fn, train=True)
@@ -91,21 +93,21 @@ if True:
     print("start training model!")
     model_opt = NoamOpt(model.src_embed[0].d_model, 1, 2000,
                         torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
-    for epoch in range(1, 300):
+    for epoch in range(1, 500):
         model.train()
         run_epoch((rebatch(pad_idx, b) for b in train_iter), model,
                   SimpleLossCompute(model.generator, criterion, model_opt))
         model.eval()
         loss = run_epoch((rebatch(pad_idx, b) for b in valid_iter), model,
                          SimpleLossCompute(model.generator, criterion, model_opt))
-        torch.save(model, "./models_2/" + str(epoch) + ".pkl")
-        with open("./models_2/data.txt", "a+") as f:
+        torch.save(model, "./models_3/" + str(epoch) + ".pkl")
+        with open("./models_3/data.txt", "a+") as f:
             f.write(str(epoch) + ":" + str(loss) + "\n")
         print(epoch, loss)
 
 else:
     # load model
-    model = torch.load("iwslt.pt")
+    model = torch.load("./models_1/317.pkl")
 
 
 def greedy_decode(model, src, src_mask, src_mask_p, max_len, start_symbol):
@@ -119,8 +121,7 @@ def greedy_decode(model, src, src_mask, src_mask_p, max_len, start_symbol):
         prob = model.generator(out[:, -1])
         _, next_word = torch.max(prob, dim=1)
         next_word = next_word.data[0]
-        ys = torch.cat([ys,
-                        torch.ones(1, 1).type_as(src.data).fill_(next_word)], dim=1)
+        ys = torch.cat([ys, torch.ones(1, 1).type_as(src.data).fill_(next_word)], dim=1)
     return ys
 
 

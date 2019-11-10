@@ -18,9 +18,7 @@ def subsequent_mask(size):
 
 def attention(query, key, value, mask=None, dropout=None):
     d_k = query.size(-1)
-    # print(query.size(), key.size())
-    # scores (b, h, v, v)
-    # print(query.size())
+    # scores (b, h, l, l)
     scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
     # print(scores.size(), mask.size())
     if mask is not None:
@@ -37,10 +35,12 @@ class MultiHeadedAttention(nn.Module):
         assert d_model % h == 0
         # We assume d_v always equals d_k
         self.d_k = d_model // h
+        self.d_model = d_model
         self.h = h
-        self.linears = clones(nn.Linear(d_model, d_model), 4)
+        self.linears = clones(nn.Linear(d_model, d_model), 3)
         self.attn = None
         self.dropout = nn.Dropout(p=dropout)
+        self.choices = clones(nn.Linear(self.d_k, d_model), h)
 
     def forward(self, query, key, value, mask=None, mask_p=None):
         if mask is not None:
@@ -54,11 +54,15 @@ class MultiHeadedAttention(nn.Module):
         x, self.attn = attention(query, key, value, mask=mask,
                                  dropout=self.dropout)
 
-        x = x.transpose(1, 2).contiguous().view(
-            nbatches, -1, self.h * self.d_k)
-
-        return self.linears[-1](x)
-
+        # x = x.transpose(1, 2).contiguous().view(
+        #     nbatches, -1, self.h * self.d_k)
+        #
+        # return self.linears[-1](x)
+        # x (b, h, l, d_k)
+        x = x.split(1, 1)
+        x = [l(a).view(nbatches, -1, self.d_model) for l, a in zip(self.choices, x)]
+        x = F.relu(torch.stack(x, dim=-2)).sum(-2)
+        return x
 
 class MyMultiHeadedAttention(nn.Module):
     def __init__(self, h, d_model, dropout=0.1):
@@ -70,6 +74,7 @@ class MyMultiHeadedAttention(nn.Module):
         self.attn = None
         self.attn_p = None
         self.dropout = nn.Dropout(p=dropout)
+        self.linear = nn.Linear(d_model, d_model)
 
     def forward(self, query, key, value, mask=None, mask_p=None):
         if mask is not None:
@@ -96,29 +101,43 @@ class MyMultiHeadedAttention(nn.Module):
                                      dropout=self.dropout)
         # compute similarity
         # dis (b, l, h)
-        dis = torch.sum((x - x_p.expand(-1, self.h, -1, -1))**2, dim=3).unsqueeze(3).transpose(1, 2)
-        output = torch.matmul(F.softmax(1/(dis+1e-9), dim=2).transpose(-1, -2), x.transpose(1, 2)).squeeze(-2)
+        dis = torch.sum((x - x_p.expand(-1, self.h, -1, -1)) ** 2, dim=3).unsqueeze(3).transpose(1, 2)
+        output = torch.matmul(F.softmax(1 / (dis + 1e-9), dim=2).transpose(-1, -2), x.transpose(1, 2)).squeeze(-2)
         # print(output.size(), x_p.size())
-        return output*0.8+x_p.squeeze(1)*0.2
+        return self.linear(output * 0.8 + x_p.squeeze(1) * 0.2)
+
 
 class MultiWayAttention(nn.Module):
     def __init__(self, h, d_model, dropout=0.1):
         super(MultiWayAttention, self).__init__()
-        self.ways = clones(MultiHeadedAttention(h, d_model, dropout), 2)
+        self.wayNum = 2
+        self.d_model = d_model
+        self.ways = clones(MultiHeadedAttention(h, d_model, dropout), self.wayNum)
         self.pred = MultiHeadedAttention(h, d_model, dropout)
+        self.keyW = nn.Linear(d_model, d_model)
+        self.queryW = nn.Linear(d_model, d_model)
 
     def forward(self, query, key, value, mask=None, mask_p=None):
-        # xs (b, w, l, d_model)
-        xs = torch.stack([l(query, key, value, mask, None) for l in self.ways], 1)
+        nbatches = query.size(0)
         # x_p (b, l, d_model)
         x_p = self.pred(query, key, value, mask_p, None)
-        # dis (b, l, w, 1)
-        dis = torch.sum((xs-x_p.unsqueeze(1).expand(-1, 2, -1, -1))**2, dim=3).unsqueeze(3).transpose(1, 2)
-        # print(xs.size(), x_p.size(), dis.size())
-        output = torch.matmul(F.softmax(1/(dis+1e-9), dim=2).transpose(-1, -2), xs.transpose(1, 2)).squeeze(-2)
-        # output (b, l ,d_model)
+        # xs (b, l, w, d_model)
+        xs = torch.stack([l(query, key, value, mask, None) for l in self.ways], 2)
+        # print(xs.size())
+        # query (b, l, d_model)
+        query = self.queryW(x_p)
+        # key (b, l, w, d_model)
+        key = self.keyW(xs)
+        # print(query.size(), key.size())
+        # scores (b, l, w)
+        scores = torch.matmul(query.unsqueeze(-2), key.transpose(-2, -1)).squeeze(-2)
+        index = torch.max(scores, dim=-1)[1].unsqueeze(-1).long()
+        # print(index.size())
+        mask_output = torch.zeros((index.size(0), index.size(1), self.wayNum)).cuda().scatter(-1, index, 1)
+        # print(mask_output.size())
+        output = torch.sum(xs.masked_fill(mask_output.unsqueeze(-1).expand(-1, -1, -1, self.d_model) == 0, 0), dim=-2).squeeze(-2)
         # print(output.size())
-        return output * 0.9 + x_p.squeeze(1) * 0.1
+        return output
 
 
 class PositionwiseFeedForward(nn.Module):
@@ -298,13 +317,13 @@ def make_model(src_vocab, tgt_vocab, N=6,
                d_model=512, d_ff=2048, h=8, dropout=0.1):
     "Helper: Construct a model from hyperparameters."
     c = copy.deepcopy
-    attn1 = MultiHeadedAttention(h, d_model)
-    attn = MyMultiHeadedAttention(h, d_model)
+    attn = MultiHeadedAttention(h, d_model)
+    # attn = MyMultiHeadedAttention(h, d_model)
     ff = PositionwiseFeedForward(d_model, d_ff, dropout)
     position = PositionalEncoding(d_model, dropout)
     model = EncoderDecoder(
         Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout), N),
-        Decoder(DecoderLayer(d_model, c(attn1), c(attn1),
+        Decoder(DecoderLayer(d_model, c(attn), c(attn),
                              c(ff), dropout), N),
         nn.Sequential(Embeddings(d_model, src_vocab), c(position)),
         nn.Sequential(Embeddings(d_model, tgt_vocab), c(position)),
@@ -315,8 +334,9 @@ def make_model(src_vocab, tgt_vocab, N=6,
             nn.init.xavier_uniform(p)
     return model
 
+
 def make_model_1(src_vocab, tgt_vocab, N=6,
-               d_model=512, d_ff=2048, h=8, dropout=0.1):
+                 d_model=512, d_ff=2048, h=8, dropout=0.1):
     "Helper: Construct a model from hyperparameters."
     c = copy.deepcopy
     attn = MultiHeadedAttention(h, d_model)
@@ -336,8 +356,9 @@ def make_model_1(src_vocab, tgt_vocab, N=6,
             nn.init.xavier_uniform(p)
     return model
 
+
 def make_model_2(src_vocab, tgt_vocab, N=6,
-               d_model=512, d_ff=2048, h=8, dropout=0.1):
+                 d_model=512, d_ff=2048, h=8, dropout=0.1):
     "Helper: Construct a model from hyperparameters."
     c = copy.deepcopy
     attn = MultiHeadedAttention(h, d_model)
@@ -356,6 +377,7 @@ def make_model_2(src_vocab, tgt_vocab, N=6,
         if p.dim() > 1:
             nn.init.xavier_uniform(p)
     return model
+
 
 if __name__ == "__main__":
     tmp_model = make_model(10, 10, 2)
