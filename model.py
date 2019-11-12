@@ -41,12 +41,13 @@ class MultiHeadedAttention(nn.Module):
         self.attn = None
         self.dropout = nn.Dropout(p=dropout)
         self.choices = clones(nn.Linear(self.d_k, d_model), h)
+        # self.choices = nn.Parameter(torch.Tensor(1, 1, self.h, self.d_model, self.d_k))
+        # self.choices_bias = nn.Parameter(torch.Tensor(h, self.d_model))
 
     def forward(self, query, key, value, mask=None, mask_p=None):
         if mask is not None:
             mask = mask.unsqueeze(1)
         nbatches = query.size(0)
-
         query, key, value = \
             [l(x).view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
              for l, x in zip(self.linears, (query, key, value))]
@@ -58,11 +59,21 @@ class MultiHeadedAttention(nn.Module):
         #     nbatches, -1, self.h * self.d_k)
         #
         # return self.linears[-1](x)
+
         # x (b, h, l, d_k)
         x = x.split(1, 1)
         x = [l(a).view(nbatches, -1, self.d_model) for l, a in zip(self.choices, x)]
-        x = F.relu(torch.stack(x, dim=-2)).sum(-2)
+        x = torch.stack(x, dim=-2).max(dim=-2)[0]
+
+        # x = x.view(nbatches, -1, self.h, self.d_k, 1)
+        # print(x.size())
+        # c = self.choices.expand(nbatches, x.size(1), -1, -1, -1)
+        # print(c.size(), type(c))
+        # x = torch.matmul(c, x)\
+        #     .view(nbatches, -1, self.h, self.d_model)
+        # x = (x+self.choices_bias).max(dim=-2)[0]
         return x
+
 
 class MyMultiHeadedAttention(nn.Module):
     def __init__(self, h, d_model, dropout=0.1):
@@ -318,7 +329,6 @@ def make_model(src_vocab, tgt_vocab, N=6,
     "Helper: Construct a model from hyperparameters."
     c = copy.deepcopy
     attn = MultiHeadedAttention(h, d_model)
-    # attn = MyMultiHeadedAttention(h, d_model)
     ff = PositionwiseFeedForward(d_model, d_ff, dropout)
     position = PositionalEncoding(d_model, dropout)
     model = EncoderDecoder(

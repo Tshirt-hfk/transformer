@@ -71,14 +71,14 @@ def rebatch(pad_idx, batch):
 
 if True:
     pad_idx = TGT.vocab.stoi["<blank>"]
-    if False:
-        model = torch.load("./models_1/276.pkl")
+    if True:
+        model = torch.load("./models_4/22.pkl")
     else:
         model = make_model(len(SRC.vocab), len(TGT.vocab), N=4, h=8)
     model.cuda()
     criterion = LabelSmoothing(size=len(TGT.vocab), padding_idx=pad_idx, smoothing=0.1)
     criterion.cuda()
-    BATCH_SIZE = 900
+    BATCH_SIZE = 1200
     train_iter = MyIterator(train, batch_size=BATCH_SIZE, device=torch.device(0),
                             repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
                             batch_size_fn=batch_size_fn, train=True)
@@ -93,15 +93,15 @@ if True:
     print("start training model!")
     model_opt = NoamOpt(model.src_embed[0].d_model, 1, 2000,
                         torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
-    for epoch in range(1, 500):
+    for epoch in range(23, 500):
         model.train()
         run_epoch((rebatch(pad_idx, b) for b in train_iter), model,
                   SimpleLossCompute(model.generator, criterion, model_opt))
         model.eval()
         loss = run_epoch((rebatch(pad_idx, b) for b in valid_iter), model,
                          SimpleLossCompute(model.generator, criterion, model_opt))
-        torch.save(model, "./models_3/" + str(epoch) + ".pkl")
-        with open("./models_3/data.txt", "a+") as f:
+        torch.save(model, "./models_4/" + str(epoch) + ".pkl")
+        with open("./models_4/data.txt", "a+") as f:
             f.write(str(epoch) + ":" + str(loss) + "\n")
         print(epoch, loss)
 
