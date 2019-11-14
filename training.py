@@ -5,7 +5,7 @@ import time
 from torch.autograd import Variable
 
 from datasetLoader import *
-from datasetHandler import batch_size_fn
+from datasetHandler import *
 
 
 def run_epoch(data_iter, model, loss_compute):
@@ -16,7 +16,7 @@ def run_epoch(data_iter, model, loss_compute):
     tokens = 0
     for i, batch in enumerate(data_iter):
         out = model.forward(batch.src, batch.trg,
-                            batch.src_mask, batch.src_mask_p, batch.trg_mask)
+                            batch.src_mask, batch.trg_mask)
         loss = loss_compute(out, batch.trg_y, batch.ntokens)
         total_loss += loss
         tokens += batch.ntokens
@@ -42,7 +42,7 @@ class NoamOpt:
         self._rate = 0
 
     def step(self):
-        "Update parameters and rate"
+        """Update parameters and rate"""
         self._step += 1
         rate = self.rate()
         for p in self.optimizer.param_groups:
@@ -103,35 +103,40 @@ class SimpleLossCompute:
         return loss.data * norm
 
 
-pad_idx = TGT.vocab.stoi["<blank>"]
-if True:
-    print("loading model!")
-    model = torch.load("./models_4/110.pkl")
-else:
-    model = make_model(len(SRC.vocab), len(TGT.vocab), N=4, h=8)
-model.cuda()
-criterion = LabelSmoothing(size=len(TGT.vocab), padding_idx=pad_idx, smoothing=0.1)
-criterion.cuda()
-BATCH_SIZE = 1200
-train_iter = MyIterator(train, batch_size=BATCH_SIZE, device=torch.device(0),
-                        repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
-                        batch_size_fn=batch_size_fn, train=True)
-valid_iter = MyIterator(val, batch_size=BATCH_SIZE, device=torch.device(0),
-                        repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
-                        batch_size_fn=batch_size_fn, train=False)
-model_opt = NoamOpt(model.src_embed[0].d_model, 1, 2000,
-                    torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
+def start_train():
+    pad_idx = TGT.vocab.stoi["<blank>"]
+    if True:
+        print("loading model!")
+        model = torch.load("./models_4/110.pkl")
+    else:
+        model = make_model(len(SRC.vocab), len(TGT.vocab), N=4, h=8)
+    model.cuda()
+    criterion = LabelSmoothing(size=len(TGT.vocab), padding_idx=pad_idx, smoothing=0.1)
+    criterion.cuda()
+    BATCH_SIZE = 1200
+    train_iter = MyIterator(train, batch_size=BATCH_SIZE, device=torch.device(0),
+                            repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
+                            batch_size_fn=batch_size_fn, train=True)
+    valid_iter = MyIterator(val, batch_size=BATCH_SIZE, device=torch.device(0),
+                            repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
+                            batch_size_fn=batch_size_fn, train=False)
+    model_opt = NoamOpt(model.src_embed[0].d_model, 1, 2000,
+                        torch.optim.Adam(model.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9))
 
-# train model
-print("start training model!")
-for epoch in range(111, 500):
-    model.train()
-    run_epoch((rebatch(pad_idx, b) for b in train_iter), model,
-              SimpleLossCompute(model.generator, criterion, model_opt))
-    model.eval()
-    loss = run_epoch((rebatch(pad_idx, b) for b in valid_iter), model,
-                     SimpleLossCompute(model.generator, criterion, model_opt))
-    torch.save(model, "./models_4/" + str(epoch) + ".pkl")
-    with open("./models_4/data.txt", "a+") as f:
-        f.write(str(epoch) + ":" + str(loss) + "\n")
-    print(epoch, loss)
+    # train model
+    print("start training model!")
+    for epoch in range(111, 500):
+        model.train()
+        run_epoch((rebatch(pad_idx, b) for b in train_iter), model,
+                  SimpleLossCompute(model.generator, criterion, model_opt))
+        model.eval()
+        loss = run_epoch((rebatch(pad_idx, b) for b in valid_iter), model,
+                         SimpleLossCompute(model.generator, criterion, model_opt))
+        torch.save(model, "./models_4/" + str(epoch) + ".pkl")
+        with open("./models_4/data.txt", "a+") as f:
+            f.write(str(epoch) + ":" + str(loss) + "\n")
+        print(epoch, loss)
+
+
+if __name__ == "__main__":
+    start_train()

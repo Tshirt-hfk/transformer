@@ -15,7 +15,6 @@ def attention(query, key, value, mask=None, dropout=None):
     d_k = query.size(-1)
     # scores (b, h, l, l)
     scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
-    # print(scores.size(), mask.size())
     if mask is not None:
         scores = scores.masked_fill(mask == 0, -1e9)
     p_attn = F.softmax(scores, dim=-1)
@@ -39,26 +38,25 @@ class MultiHeadedAttention(nn.Module):
         # self.choices = nn.Parameter(torch.Tensor(1, 1, self.h, self.d_model, self.d_k))
         # self.choices_bias = nn.Parameter(torch.Tensor(h, self.d_model))
 
-    def forward(self, query, key, value, mask=None, mask_p=None):
+    def forward(self, query, key, value, mask=None):
         if mask is not None:
             mask = mask.unsqueeze(1)
         nbatches = query.size(0)
         query, key, value = \
             [l(x).view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
              for l, x in zip(self.linears, (query, key, value))]
-
         x, self.attn = attention(query, key, value, mask=mask,
                                  dropout=self.dropout)
 
         # x = x.transpose(1, 2).contiguous().view(
         #     nbatches, -1, self.h * self.d_k)
-        #
         # return self.linears[-1](x)
 
         # x (b, h, l, d_k)
         x = x.split(1, 1)
         x = [l(a).view(nbatches, -1, self.d_model) for l, a in zip(self.choices, x)]
         x = torch.stack(x, dim=-2).max(dim=-2)[0]
+        return x
 
         # x = x.view(nbatches, -1, self.h, self.d_k, 1)
         # print(x.size())
@@ -67,7 +65,7 @@ class MultiHeadedAttention(nn.Module):
         # x = torch.matmul(c, x)\
         #     .view(nbatches, -1, self.h, self.d_model)
         # x = (x+self.choices_bias).max(dim=-2)[0]
-        return x
+        # return x
 
 
 class PositionwiseFeedForward(nn.Module):
@@ -145,9 +143,9 @@ class Encoder(nn.Module):
         self.layers = clones(layer, N)
         self.norm = LayerNorm(layer.size)
 
-    def forward(self, x, mask, mask_p):
+    def forward(self, x, mask):
         for layer in self.layers:
-            x = layer(x, mask, mask_p)
+            x = layer(x, mask)
         return self.norm(x)
 
 
@@ -161,9 +159,9 @@ class EncoderLayer(nn.Module):
         self.sublayer = clones(SublayerConnection(size, dropout), 2)
         self.size = size
 
-    def forward(self, x, mask, mask_p):
-        ""
-        x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, mask, mask_p))
+    def forward(self, x, mask):
+        """"""
+        x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, mask))
         return self.sublayer[1](x, self.feed_forward)
 
 
@@ -191,7 +189,7 @@ class DecoderLayer(nn.Module):
         self.sublayer = clones(SublayerConnection(size, dropout), 3)
 
     def forward(self, x, memory, src_mask, tgt_mak):
-        ""
+        """"""
         m = memory
         x = self.sublayer[0](x, lambda x: self.self_attn(x, x, x, tgt_mak))
         x = self.sublayer[1](x, lambda x: self.src_attn(x, m, m, src_mask))
@@ -212,13 +210,13 @@ class EncoderDecoder(nn.Module):
         self.tgt_embed = tgt_embed
         self.generator = generator
 
-    def forward(self, src, tgt, src_mask, src_mask_p, tgt_mask):
+    def forward(self, src, tgt, src_mask, tgt_mask):
         """Take in and process masked src and target sequences."""
-        return self.decode(self.encode(src, src_mask, src_mask_p), src_mask,
+        return self.decode(self.encode(src, src_mask,), src_mask,
                            tgt, tgt_mask)
 
-    def encode(self, src, src_mask, src_mask_p):
-        return self.encoder(self.src_embed(src), src_mask, src_mask_p)
+    def encode(self, src, src_mask):
+        return self.encoder(self.src_embed(src), src_mask)
 
     def decode(self, memory, src_mask, tgt, tgt_mask):
         return self.decoder(self.tgt_embed(tgt), memory, src_mask, tgt_mask)

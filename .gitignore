@@ -1,3 +1,8 @@
 .idea/
 *.pyc
 *.pkl
+models/
+models_1/
+models_2/
+models_3/
+models_4/

@@ -36,7 +36,6 @@ class Batch:
     def __init__(self, src, trg=None, pad=0):
         self.src = src
         self.src_mask = (src != pad).unsqueeze(-2)
-        self.src_mask_p = self.make_mask_p(src, pad)
         if trg is not None:
             self.trg = trg[:, :-1]
             self.trg_y = trg[:, 1:]
@@ -50,13 +49,5 @@ class Batch:
         tgt_mask = tgt_mask & Variable(
             subsequent_mask(tgt.size(-1)).type_as(tgt_mask.data))
         return tgt_mask
-
-    @staticmethod
-    def make_mask_p(src, pad):
-        src_mask_p = (src != pad).unsqueeze(-2)
-        src_mask_p = src_mask_p & Variable(
-            (torch.from_numpy(np.eye(src.size(-1), src.size(-1), dtype="uint8")) == 0)
-                .unsqueeze(0).type_as(src_mask_p.data))
-        return src_mask_p
 
 
