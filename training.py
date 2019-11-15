@@ -87,19 +87,21 @@ class LabelSmoothing(nn.Module):
 class SimpleLossCompute:
     """A simple loss compute and train function."""
 
-    def __init__(self, generator, criterion, opt=None):
+    def __init__(self, generator, criterion, opt=None, train=True):
         self.generator = generator
         self.criterion = criterion
         self.opt = opt
+        self.train = train
 
     def __call__(self, x, y, norm):
         x = self.generator(x)
         loss = self.criterion(x.contiguous().view(-1, x.size(-1)),
                               y.contiguous().view(-1)) / norm
-        loss.backward()
-        if self.opt is not None:
-            self.opt.step()
-            self.opt.optimizer.zero_grad()
+        if self.train:
+            loss.backward()
+            if self.opt is not None:
+                self.opt.step()
+                self.opt.optimizer.zero_grad()
         return loss.data * norm
 
 
@@ -128,10 +130,10 @@ def start_train():
     for epoch in range(111, 500):
         model.train()
         run_epoch((rebatch(pad_idx, b) for b in train_iter), model,
-                  SimpleLossCompute(model.generator, criterion, model_opt))
+                  SimpleLossCompute(model.generator, criterion, model_opt, True))
         model.eval()
         loss = run_epoch((rebatch(pad_idx, b) for b in valid_iter), model,
-                         SimpleLossCompute(model.generator, criterion, model_opt))
+                         SimpleLossCompute(model.generator, criterion, model_opt, False))
         torch.save(model, "./models_4/" + str(epoch) + ".pkl")
         with open("./models_4/data.txt", "a+") as f:
             f.write(str(epoch) + ":" + str(loss) + "\n")

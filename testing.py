@@ -39,9 +39,10 @@ def translation(out, trg):
 
 
 def bleu(outs, trgs):
-    candidates = []
-    references = []
-    bleu_value = 0
+    bleu_value1 = 0
+    bleu_value2 = 0
+    bleu_value3 = 0
+    bleu_value4 = 0
     num = 0
     for out, trg in zip(outs, trgs):
         assert out.size(0) == trg.size(0)
@@ -58,17 +59,26 @@ def bleu(outs, trgs):
                 if sym == "</s>": break
                 tmp.append(sym)
             reference = [tmp]
-            tmp = sentence_bleu(reference, candidate)
-            bleu_value = bleu_value + tmp
-    return bleu_value / num
+            tmp1 = sentence_bleu(reference, candidate, weights=(1, 0, 0, 0))
+            tmp2 = sentence_bleu(reference, candidate, weights=(0.5, 0.5, 0, 0))
+            tmp3 = sentence_bleu(reference, candidate, weights=(0.33333, 0.33333, 0.33333, 0))
+            tmp4 = sentence_bleu(reference, candidate, weights=(0.25, 0.25, 0.25, 0.25))
+            bleu_value1 = bleu_value1 + tmp1
+            bleu_value2 = bleu_value2 + tmp2
+            bleu_value3 = bleu_value3 + tmp3
+            bleu_value4 = bleu_value4 + tmp4
+    return bleu_value1 / num, bleu_value2 / num, bleu_value3 / num, bleu_value4 / num
 
 
 if __name__ == "__main__":
-    model = torch.load("./models_4/110.pkl")
+    model = torch.load("./models_4/195.pkl")
     model.cuda()
     model.eval()
     BATCH_SIZE = 1200
     pad_idx = TGT.vocab.stoi["<blank>"]
+    valid_iter = MyIterator(val, batch_size=BATCH_SIZE, device=torch.device(0),
+                            repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
+                            batch_size_fn=batch_size_fn, train=False)
     test_iter = MyIterator(test, batch_size=BATCH_SIZE, device=torch.device(0),
                            repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
                            batch_size_fn=batch_size_fn, train=False)
