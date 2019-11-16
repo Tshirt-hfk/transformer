@@ -78,7 +78,7 @@ class MultiHeadedAttention1(nn.Module):
         # x (b, h, l, d_k)
         x = x.split(1, 1)
         x = [l(a).view(nbatches, -1, self.d_model) for l, a in zip(self.choices, x)]
-        x = torch.stack(x, dim=-2).max(dim=-2)[0]
+        x = torch.stack(x, dim=-1).max(dim=-1)[0]
         return x
 
         # x = x.view(nbatches, -1, self.h, self.d_k, 1)
@@ -119,6 +119,38 @@ class MultiHeadedAttention2(nn.Module):
         x = [l(a) for l, a in zip(self.midLinears, x)]
         x = torch.stack(x, dim=-2).view(nbatches, -1, self.h * self.d_k)
         return self.linears[-1](x)
+
+
+class MultiHeadedAttention3(nn.Module):
+    def __init__(self, h, d_model, dropout=0.1):
+        super(MultiHeadedAttention1, self).__init__()
+        assert d_model % h == 0
+        # We assume d_v always equals d_k
+        self.d_k = d_model // h
+        self.d_model = d_model
+        self.h = h
+        self.linears = clones(nn.Linear(d_model, d_model), 3)
+        self.attn = None
+        self.dropout = nn.Dropout(p=dropout)
+        self.choices = clones(nn.Linear(self.d_k, d_model), h)
+        # self.choices = nn.Parameter(torch.Tensor(1, 1, self.h, self.d_model, self.d_k))
+        # self.choices_bias = nn.Parameter(torch.Tensor(h, self.d_model))
+
+    def forward(self, query, key, value, mask=None):
+        if mask is not None:
+            mask = mask.unsqueeze(1)
+        nbatches = query.size(0)
+        query, key, value = \
+            [l(x).view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
+             for l, x in zip(self.linears, (query, key, value))]
+        x, self.attn = attention(query, key, value, mask=mask,
+                                 dropout=self.dropout)
+
+        # x (b, h, l, d_k)
+        x = x.split(1, 1)
+        x = [l(a).view(nbatches, -1, self.d_model) for l, a in zip(self.choices, x)]
+        x = F.celu(torch.stack(x, dim=-1)).sum(dim=-1)
+        return x
 
 
 class PositionwiseFeedForward(nn.Module):
@@ -294,8 +326,10 @@ def make_model(src_vocab, tgt_vocab, t=0, N=6,
         attn = MultiHeadedAttention(h, d_model)
     elif t == 1:
         attn = MultiHeadedAttention1(h, d_model)
-    else:
+    elif t == 2:
         attn = MultiHeadedAttention2(h, d_model)
+    else:
+        attn = MultiHeadedAttention3(h, d_model)
     ff = PositionwiseFeedForward(d_model, d_ff, dropout)
     position = PositionalEncoding(d_model, dropout)
     model = EncoderDecoder(
