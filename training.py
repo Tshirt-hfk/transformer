@@ -6,6 +6,7 @@ from torch.autograd import Variable
 
 from datasetLoader import *
 from datasetHandler import *
+from model import make_model
 
 
 def run_epoch(data_iter, model, loss_compute):
@@ -107,15 +108,15 @@ class SimpleLossCompute:
 
 def start_train():
     pad_idx = TGT.vocab.stoi["<blank>"]
-    if True:
+    if False:
         print("loading model!")
         model = torch.load("./models_4/110.pkl")
     else:
-        model = make_model(len(SRC.vocab), len(TGT.vocab), N=4, h=8)
+        model = make_model(len(SRC.vocab), len(TGT.vocab), t=2, N=4, h=8)
     model.cuda()
     criterion = LabelSmoothing(size=len(TGT.vocab), padding_idx=pad_idx, smoothing=0.1)
     criterion.cuda()
-    BATCH_SIZE = 1200
+    BATCH_SIZE = 900
     train_iter = MyIterator(train, batch_size=BATCH_SIZE, device=torch.device(0),
                             repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
                             batch_size_fn=batch_size_fn, train=True)
@@ -127,13 +128,13 @@ def start_train():
 
     # train model
     print("start training model!")
-    for epoch in range(111, 500):
+    for epoch in range(1, 500):
         model.train()
         run_epoch((rebatch(pad_idx, b) for b in train_iter), model,
                   SimpleLossCompute(model.generator, criterion, model_opt, True))
         model.eval()
         loss = run_epoch((rebatch(pad_idx, b) for b in valid_iter), model,
-                         SimpleLossCompute(model.generator, criterion, model_opt, False))
+                         SimpleLossCompute(model.generator, criterion, None, False))
         torch.save(model, "./models_4/" + str(epoch) + ".pkl")
         with open("./models_4/data.txt", "a+") as f:
             f.write(str(epoch) + ":" + str(loss) + "\n")

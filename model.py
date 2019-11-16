@@ -31,6 +31,33 @@ class MultiHeadedAttention(nn.Module):
         self.d_k = d_model // h
         self.d_model = d_model
         self.h = h
+        self.linears = clones(nn.Linear(d_model, d_model), 4)
+        self.attn = None
+        self.dropout = nn.Dropout(p=dropout)
+
+    def forward(self, query, key, value, mask=None):
+        if mask is not None:
+            mask = mask.unsqueeze(1)
+        nbatches = query.size(0)
+        query, key, value = \
+            [l(x).view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
+             for l, x in zip(self.linears, (query, key, value))]
+        x, self.attn = attention(query, key, value, mask=mask,
+                                 dropout=self.dropout)
+
+        x = x.transpose(1, 2).contiguous().view(
+            nbatches, -1, self.h * self.d_k)
+        return self.linears[-1](x)
+
+
+class MultiHeadedAttention1(nn.Module):
+    def __init__(self, h, d_model, dropout=0.1):
+        super(MultiHeadedAttention1, self).__init__()
+        assert d_model % h == 0
+        # We assume d_v always equals d_k
+        self.d_k = d_model // h
+        self.d_model = d_model
+        self.h = h
         self.linears = clones(nn.Linear(d_model, d_model), 3)
         self.attn = None
         self.dropout = nn.Dropout(p=dropout)
@@ -48,10 +75,6 @@ class MultiHeadedAttention(nn.Module):
         x, self.attn = attention(query, key, value, mask=mask,
                                  dropout=self.dropout)
 
-        # x = x.transpose(1, 2).contiguous().view(
-        #     nbatches, -1, self.h * self.d_k)
-        # return self.linears[-1](x)
-
         # x (b, h, l, d_k)
         x = x.split(1, 1)
         x = [l(a).view(nbatches, -1, self.d_model) for l, a in zip(self.choices, x)]
@@ -66,6 +89,36 @@ class MultiHeadedAttention(nn.Module):
         #     .view(nbatches, -1, self.h, self.d_model)
         # x = (x+self.choices_bias).max(dim=-2)[0]
         # return x
+
+
+class MultiHeadedAttention2(nn.Module):
+    def __init__(self, h, d_model, dropout=0.1):
+        super(MultiHeadedAttention2, self).__init__()
+        assert d_model % h == 0
+        # We assume d_v always equals d_k
+        self.d_k = d_model // h
+        self.d_model = d_model
+        self.h = h
+        self.linears = clones(nn.Linear(d_model, d_model), 4)
+        self.attn = None
+        self.dropout = nn.Dropout(p=dropout)
+        self.midLinears = clones(nn.Linear(self.d_k, self.d_k), h)
+
+    def forward(self, query, key, value, mask=None):
+        if mask is not None:
+            mask = mask.unsqueeze(1)
+        nbatches = query.size(0)
+        query, key, value = \
+            [l(x).view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
+             for l, x in zip(self.linears, (query, key, value))]
+        x, self.attn = attention(query, key, value, mask=mask,
+                                 dropout=self.dropout)
+
+        # x (b, h, l, d_k)
+        x = x.split(1, 1)
+        x = [l(a) for l, a in zip(self.midLinears, x)]
+        x = torch.stack(x, dim=-2).view(nbatches, -1, self.h * self.d_k)
+        return self.linears[-1](x)
 
 
 class PositionwiseFeedForward(nn.Module):
@@ -233,11 +286,16 @@ class Generator(nn.Module):
         return F.log_softmax(self.proj(x), dim=-1)
 
 
-def make_model(src_vocab, tgt_vocab, N=6,
+def make_model(src_vocab, tgt_vocab, t=0, N=6,
                d_model=512, d_ff=2048, h=8, dropout=0.1):
     """Helper: Construct a model from hyperparameters."""
     c = copy.deepcopy
-    attn = MultiHeadedAttention(h, d_model)
+    if t == 0:
+        attn = MultiHeadedAttention(h, d_model)
+    elif t == 1:
+        attn = MultiHeadedAttention1(h, d_model)
+    else:
+        attn = MultiHeadedAttention2(h, d_model)
     ff = PositionwiseFeedForward(d_model, d_ff, dropout)
     position = PositionalEncoding(d_model, dropout)
     model = EncoderDecoder(
