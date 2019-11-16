@@ -7,6 +7,9 @@ from torch.autograd import Variable
 from datasetLoader import *
 from datasetHandler import *
 from model import make_model
+import os
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 
 def run_epoch(data_iter, model, loss_compute):
