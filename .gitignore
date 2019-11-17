@@ -1,6 +1,7 @@
 .idea/
 *.pyc
 *.pkl
+.data/
 models/
 models_1/
 models_2/
