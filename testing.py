@@ -41,6 +41,7 @@ def translation(src, out, trg):
             if sym == "</s>": break
             print(sym, end=" ")
         print()
+        print()
 
 
 def bleu(outs, trgs):
