@@ -21,9 +21,14 @@ def greedy_decode(model, src, src_mask, max_len, start_symbol):
     return ys
 
 
-def translation(out, trg):
-    assert out.size(0) == trg.size(0)
+def translation(src, out, trg):
+    assert out.size(0) == trg.size(0) and src.size(0) == out.size(0)
     for x in range(0, out.size(0)):
+        print("Source:", end="\t")
+        for j in range(1, src.size(1)):
+            sym = SRC.vocab.itos[src[x, j]]
+            print(sym, end=" ")
+        print()
         print("Translation:", end="\t")
         for j in range(1, out.size(1)):
             sym = TGT.vocab.itos[out[x, j]]
@@ -61,7 +66,7 @@ def bleu(outs, trgs):
             reference = [tmp]
             tmp1 = sentence_bleu(reference, candidate, weights=(1, 0, 0, 0))
             tmp2 = sentence_bleu(reference, candidate, weights=(0.5, 0.5, 0, 0))
-            tmp3 = sentence_bleu(reference, candidate, weights=(0.33333, 0.33333, 0.33333, 0))
+            tmp3 = sentence_bleu(reference, candidate, weights=(1/3, 1/3, 1/3, 0))
             tmp4 = sentence_bleu(reference, candidate, weights=(0.25, 0.25, 0.25, 0.25))
             bleu_value1 = bleu_value1 + tmp1
             bleu_value2 = bleu_value2 + tmp2
@@ -71,10 +76,10 @@ def bleu(outs, trgs):
 
 
 if __name__ == "__main__":
-    model = torch.load("./models_4/195.pkl")
+    model = torch.load("./models/25.pkl")
     model.cuda()
     model.eval()
-    BATCH_SIZE = 1200
+    BATCH_SIZE = 300
     pad_idx = TGT.vocab.stoi["<blank>"]
     valid_iter = MyIterator(val, batch_size=BATCH_SIZE, device=torch.device(0),
                             repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
@@ -91,7 +96,7 @@ if __name__ == "__main__":
         trg = batch.trg
 
         out = greedy_decode(model, src, src_mask, max_len=60, start_symbol=TGT.vocab.stoi["<s>"])
-        translation(out, trg)
+        translation(src, out, trg)
         outs.append(out)
         trgs.append(trg)
         # break

@@ -113,7 +113,7 @@ def start_train():
     pad_idx = TGT.vocab.stoi["<blank>"]
     if False:
         print("loading model!")
-        model = torch.load("./models_4/110.pkl")
+        model = torch.load("./models/205.pkl")
     else:
         model = make_model(len(SRC.vocab), len(TGT.vocab), t=3, N=6, h=8)
     model.cuda()
