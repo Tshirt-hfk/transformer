@@ -25,14 +25,14 @@ def attention(query, key, value, mask=None, dropout=None):
 
 
 class MultiHeadedAttention(nn.Module):
-    def __init__(self, h, d_model, dropout=0.1):
+    def __init__(self, h, d_k, d_model, dropout=0.1):
         super(MultiHeadedAttention, self).__init__()
-        assert d_model % h == 0
         # We assume d_v always equals d_k
-        self.d_k = d_model // h
+        self.d_k = d_k
         self.d_model = d_model
         self.h = h
-        self.linears = clones(nn.Linear(d_model, d_model), 4)
+        self.linears = clones(nn.Linear(d_model, h*d_k), 3)
+        self.linears_last = nn.Linear(h*d_k, d_model)
         self.attn = None
         self.dropout = nn.Dropout(p=dropout)
 
@@ -48,21 +48,23 @@ class MultiHeadedAttention(nn.Module):
 
         x = x.transpose(1, 2).contiguous().view(
             nbatches, -1, self.h * self.d_k)
-        return self.linears[-1](x)
+        return self.linears_last(x)
 
 
 class MultiHeadedAttention1(nn.Module):
-    def __init__(self, h, d_model, dropout=0.1):
+    def __init__(self, h, d_k, d_model, dropout=0.1):
         super(MultiHeadedAttention1, self).__init__()
-        assert d_model % h == 0
+        # assert d_model % h == 0
         # We assume d_v always equals d_k
-        self.d_k = d_model // h
+        self.d_k = d_k
         self.d_model = d_model
         self.h = h
-        self.linears = clones(nn.Linear(d_model, d_model), 3)
+        self.linears = clones(nn.Linear(d_model, h*d_k), 3)
         self.attn = None
         self.dropout = nn.Dropout(p=dropout)
         self.choices = clones(nn.Linear(self.d_k, d_model), h)
+        # self.choices_parm = nn.Parameter(torch.ones(self.h, self.d_model))
+        # self.choices_bias = nn.Parameter(torch.zeros(self.d_model))
         # self.choices = nn.Parameter(torch.Tensor(1, 1, self.h, self.d_model, self.d_k))
         # self.choices_bias = nn.Parameter(torch.Tensor(h, self.d_model))
 
@@ -79,8 +81,12 @@ class MultiHeadedAttention1(nn.Module):
         # x (b, h, l, d_k)
         x = x.split(1, 1)
         x = [l(a).view(nbatches, -1, self.d_model) for l, a in zip(self.choices, x)]
-        x = torch.stack(x, dim=-1).max(dim=-1)[0]
-        return x
+        x = torch.stack(x, dim=-1)
+        x0 = x.abs()
+        x1 = x0.max(dim=-1)[0]
+        x2 = (x0/(x1.unsqueeze(-1)+1e-2)*x).sum(dim=-1)
+        # print(x1.size(), x2.size())
+        return x2
 
         # x = x.view(nbatches, -1, self.h, self.d_k, 1)
         # print(x.size())
@@ -93,14 +99,15 @@ class MultiHeadedAttention1(nn.Module):
 
 
 class MultiHeadedAttention2(nn.Module):
-    def __init__(self, h, d_model, dropout=0.1):
+    def __init__(self, h, d_k, d_model, dropout=0.1):
         super(MultiHeadedAttention2, self).__init__()
-        assert d_model % h == 0
+        # assert d_model % h == 0
         # We assume d_v always equals d_k
-        self.d_k = d_model // h
+        self.d_k = d_k
         self.d_model = d_model
         self.h = h
-        self.linears = clones(nn.Linear(d_model, d_model), 4)
+        self.linears = clones(nn.Linear(d_model, h*d_k), 3)
+        self.linears_last = nn.Linear(h*d_k, d_model)
         self.attn = None
         self.dropout = nn.Dropout(p=dropout)
         self.midLinears = clones(nn.Linear(self.d_k, self.d_k), h)
@@ -119,18 +126,18 @@ class MultiHeadedAttention2(nn.Module):
         x = x.split(1, 1)
         x = [l(a) for l, a in zip(self.midLinears, x)]
         x = torch.stack(x, dim=-2).view(nbatches, -1, self.h * self.d_k)
-        return self.linears[-1](x)
+        return self.linears_last(x)
 
 
 class MultiHeadedAttention3(nn.Module):
-    def __init__(self, h, d_model, dropout=0.1):
+    def __init__(self, h, d_k, d_model, dropout=0.1):
         super(MultiHeadedAttention1, self).__init__()
-        assert d_model % h == 0
+        # assert d_model % h == 0
         # We assume d_v always equals d_k
-        self.d_k = d_model // h
+        self.d_k = d_k
         self.d_model = d_model
         self.h = h
-        self.linears = clones(nn.Linear(d_model, d_model), 3)
+        self.linears = clones(nn.Linear(d_model, h*d_k), 3)
         self.attn = None
         self.dropout = nn.Dropout(p=dropout)
         self.choices = clones(nn.Linear(self.d_k, d_model), h)
@@ -320,17 +327,17 @@ class Generator(nn.Module):
 
 
 def make_model(src_vocab, tgt_vocab, t=0, N=6,
-               d_model=512, d_ff=2048, h=8, dropout=0.1):
+               d_k=64, d_model=512, d_ff=2048, h=8, dropout=0.1):
     """Helper: Construct a model from hyperparameters."""
     c = copy.deepcopy
     if t == 0:
-        attn = MultiHeadedAttention(h, d_model)
+        attn = MultiHeadedAttention(h, d_k, d_model)
     elif t == 1:
-        attn = MultiHeadedAttention1(h, d_model)
+        attn = MultiHeadedAttention1(h, d_k, d_model)
     elif t == 2:
-        attn = MultiHeadedAttention2(h, d_model)
+        attn = MultiHeadedAttention2(h, d_k, d_model)
     else:
-        attn = MultiHeadedAttention3(h, d_model)
+        attn = MultiHeadedAttention3(h, d_k, d_model)
     ff = PositionwiseFeedForward(d_model, d_ff, dropout)
     position = PositionalEncoding(d_model, dropout)
     model = EncoderDecoder(
@@ -343,10 +350,10 @@ def make_model(src_vocab, tgt_vocab, t=0, N=6,
     )
     for p in model.parameters():
         if p.dim() > 1:
-            nn.init.xavier_uniform(p)
+            nn.init.xavier_uniform_(p)
     return model
 
 
 if __name__ == "__main__":
-    tmp_model = make_model(10, 10, 2)
+    tmp_model = make_model(10, 10, 0, 2)
     print(tmp_model)

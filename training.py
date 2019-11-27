@@ -91,16 +91,24 @@ class LabelSmoothing(nn.Module):
 class SimpleLossCompute:
     """A simple loss compute and train function."""
 
-    def __init__(self, generator, criterion, opt=None, train=True):
+    def __init__(self, model, generator, criterion, opt=None, train=True):
+        self.model = model
         self.generator = generator
         self.criterion = criterion
         self.opt = opt
         self.train = train
+        self.reg = 1e-6
 
     def __call__(self, x, y, norm):
         x = self.generator(x)
         loss = self.criterion(x.contiguous().view(-1, x.size(-1)),
                               y.contiguous().view(-1)) / norm
+        # l1_loss = Variable(torch.FloatTensor([0]), requires_grad=True).cuda()
+        # for name, param in self.model.named_parameters():
+        #     if "choices_parm" in name:
+        #         l1_loss = l1_loss + (self.reg * torch.sum(torch.abs(param)))
+        # print(loss, l1_loss)
+        # loss1 = l1_loss + loss
         if self.train:
             loss.backward()
             if self.opt is not None:
@@ -115,7 +123,7 @@ def start_train():
         print("loading model!")
         model = torch.load("./models/205.pkl")
     else:
-        model = make_model(len(SRC.vocab), len(TGT.vocab), t=3, N=6, h=8)
+        model = make_model(len(SRC.vocab), len(TGT.vocab), t=1, N=4, h=8, d_k=64)
     model.cuda()
     criterion = LabelSmoothing(size=len(TGT.vocab), padding_idx=pad_idx, smoothing=0.1)
     criterion.cuda()
@@ -123,7 +131,10 @@ def start_train():
     train_iter = MyIterator(train, batch_size=BATCH_SIZE, device=torch.device(0),
                             repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
                             batch_size_fn=batch_size_fn, train=True)
-    valid_iter = MyIterator(val, batch_size=BATCH_SIZE, device=torch.device(0),
+    # valid_iter = MyIterator(val, batch_size=BATCH_SIZE, device=torch.device(0),
+    #                         repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
+    #                         batch_size_fn=batch_size_fn, train=False)
+    test_iter = MyIterator(test, batch_size=BATCH_SIZE, device=torch.device(0),
                             repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
                             batch_size_fn=batch_size_fn, train=False)
     model_opt = NoamOpt(model.src_embed[0].d_model, 1, 2000,
@@ -131,15 +142,16 @@ def start_train():
 
     # train model
     print("start training model!")
-    for epoch in range(1, 500):
+    for epoch in range(20, 500):
         model.train()
         run_epoch((rebatch(pad_idx, b) for b in train_iter), model,
-                  SimpleLossCompute(model.generator, criterion, model_opt, True))
+                  SimpleLossCompute(model, model.generator, criterion, model_opt, True))
         model.eval()
-        loss = run_epoch((rebatch(pad_idx, b) for b in valid_iter), model,
-                         SimpleLossCompute(model.generator, criterion, None, False))
-        torch.save(model, "./models_4/" + str(epoch) + ".pkl")
-        with open("./models_4/data.txt", "a+") as f:
+        loss = run_epoch((rebatch(pad_idx, b) for b in test_iter), model,
+                         SimpleLossCompute(model, model.generator, criterion, None, False))
+        if epoch % 5 == 0:
+            torch.save(model, "./models_2/" + str(epoch) + ".pkl")
+        with open("./models_2/data.txt", "a+") as f:
             f.write(str(epoch) + ":" + str(loss) + "\n")
         print(epoch, loss)
 
