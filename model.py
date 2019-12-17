@@ -266,9 +266,12 @@ class Decoder(nn.Module):
         self.norm = LayerNorm(layer.size)
 
     def forward(self, x, memory, src_mask, tgt_mask):
+        ys = []
         for layer in self.layers:
             x = layer(x, memory, src_mask, tgt_mask)
-        return self.norm(x)
+            ys.append(x)
+        ys = torch.stack(ys, dim=-2)
+        return ys
 
 
 class DecoderLayer(nn.Module):
@@ -318,12 +321,17 @@ class EncoderDecoder(nn.Module):
 class Generator(nn.Module):
     "Define standard linear + softmax generation step."
 
-    def __init__(self, d_model, vocab):
+    def __init__(self, d_model, vocab, N):
         super(Generator, self).__init__()
         self.proj = nn.Linear(d_model, vocab)
+        k = [math.log(i+1, 2) for i in range(N)]
+        k = torch.Tensor(k).cuda()
+        self.k = Variable((k / k.sum()).unsqueeze(-1).unsqueeze(0).unsqueeze(0))
 
     def forward(self, x):
-        return F.log_softmax(self.proj(x), dim=-1)
+        x = self.proj(x)
+        x = (self.k*x).sum(dim=-2)
+        return F.log_softmax(x, dim=-1)
 
 
 def make_model(src_vocab, tgt_vocab, t=0, N=6,
@@ -346,7 +354,7 @@ def make_model(src_vocab, tgt_vocab, t=0, N=6,
                              c(ff), dropout), N),
         nn.Sequential(Embeddings(d_model, src_vocab), c(position)),
         nn.Sequential(Embeddings(d_model, tgt_vocab), c(position)),
-        Generator(d_model, tgt_vocab)
+        Generator(d_model, tgt_vocab, N)
     )
     for p in model.parameters():
         if p.dim() > 1:

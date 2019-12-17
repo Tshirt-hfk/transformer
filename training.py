@@ -123,17 +123,17 @@ def start_train():
         print("loading model!")
         model = torch.load("./models/205.pkl")
     else:
-        model = make_model(len(SRC.vocab), len(TGT.vocab), t=1, N=4, h=8, d_k=64)
+        model = make_model(len(SRC.vocab), len(TGT.vocab), t=0, N=4, h=8, d_k=64)
     model.cuda()
     criterion = LabelSmoothing(size=len(TGT.vocab), padding_idx=pad_idx, smoothing=0.1)
     criterion.cuda()
-    BATCH_SIZE = 900
+    BATCH_SIZE = 1000
     train_iter = MyIterator(train, batch_size=BATCH_SIZE, device=torch.device(0),
                             repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
                             batch_size_fn=batch_size_fn, train=True)
-    # valid_iter = MyIterator(val, batch_size=BATCH_SIZE, device=torch.device(0),
-    #                         repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
-    #                         batch_size_fn=batch_size_fn, train=False)
+    valid_iter = MyIterator(val, batch_size=BATCH_SIZE, device=torch.device(0),
+                            repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
+                            batch_size_fn=batch_size_fn, train=False)
     test_iter = MyIterator(test, batch_size=BATCH_SIZE, device=torch.device(0),
                             repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
                             batch_size_fn=batch_size_fn, train=False)
@@ -142,17 +142,18 @@ def start_train():
 
     # train model
     print("start training model!")
-    for epoch in range(20, 500):
+    for epoch in range(1, 500):
         model.train()
         run_epoch((rebatch(pad_idx, b) for b in train_iter), model,
                   SimpleLossCompute(model, model.generator, criterion, model_opt, True))
         model.eval()
-        loss = run_epoch((rebatch(pad_idx, b) for b in test_iter), model,
+        loss1 = run_epoch((rebatch(pad_idx, b) for b in valid_iter), model,
                          SimpleLossCompute(model, model.generator, criterion, None, False))
-        if epoch % 5 == 0:
-            torch.save(model, "./models_2/" + str(epoch) + ".pkl")
+        loss2 = run_epoch((rebatch(pad_idx, b) for b in test_iter), model,
+                         SimpleLossCompute(model, model.generator, criterion, None, False))
+        torch.save(model, "./models_2/" + str(epoch) + ".pkl")
         with open("./models_2/data.txt", "a+") as f:
-            f.write(str(epoch) + ":" + str(loss) + "\n")
+            f.write(str(epoch) + ":" + str(loss1) + "\t" + str(loss2) + "\n")
         print(epoch, loss)
 
 
