@@ -15,9 +15,12 @@ def greedy_decode(model, src, src_mask, max_len, start_symbol):
     for i in range(max_len - 1):
         out = model.decode(memory, src_mask, Variable(ys),
                            Variable(subsequent_mask(ys.size(1)).type_as(src.data)))
-        prob = model.generator(out[:, -1])
-        _, next_word = torch.max(prob, dim=1)
-        ys = torch.cat([ys, next_word.unsqueeze(1)], dim=1)
+        # print(out.size())
+        prob = model.generator(out[:, -1:, :, :])
+        # print(prob.size())
+        _, next_word = torch.max(prob, dim=-1)
+        # print(ys.size(), _.size(), next_word.size())
+        ys = torch.cat([ys, next_word], dim=1)
     return ys
 
 
@@ -77,19 +80,20 @@ def bleu(outs, trgs):
 
 
 if __name__ == "__main__":
-    model = torch.load("./models/25.pkl")
+    model = torch.load("./models_2/10.pkl")
     model.cuda()
     model.eval()
     BATCH_SIZE = 300
     pad_idx = TGT.vocab.stoi["<blank>"]
-    valid_iter = MyIterator(val, batch_size=BATCH_SIZE, device=torch.device(0),
-                            repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
-                            batch_size_fn=batch_size_fn, train=False)
+    # valid_iter = MyIterator(val, batch_size=BATCH_SIZE, device=torch.device(0),
+    #                         repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
+    #                         batch_size_fn=batch_size_fn, train=False)
     test_iter = MyIterator(test, batch_size=BATCH_SIZE, device=torch.device(0),
                            repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
                            batch_size_fn=batch_size_fn, train=False)
     outs = []
     trgs = []
+    print("start testing!")
     for i, batch in enumerate((rebatch(pad_idx, b) for b in test_iter)):
         # print(i, batch.src)
         src = batch.src
