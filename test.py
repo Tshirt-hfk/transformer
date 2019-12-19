@@ -5,10 +5,43 @@ from datasetLoader import *
 from nltk.translate.bleu_score import sentence_bleu, corpus_bleu
 
 # load model
-from training import run_epoch, SimpleLossCompute, LabelSmoothing, NoamOpt
+from train import run_epoch, SimpleLossCompute, LabelSmoothing, NoamOpt
 
 
-def greedy_decode(model, src, src_mask, max_len, start_symbol):
+def beam_search(model, src, src_mask, max_len, start_symbol, end_symbol, k=4):
+    batch = src.size(0)
+    memory = model.encode(src, src_mask)
+    ps = torch.zeros(batch).unsqueeze(dim=0).cuda()
+    ys = torch.ones(batch, 1).fill_(start_symbol).type_as(src.data).unsqueeze(dim=0).cuda()
+    symbols = torch.ones(batch).unsqueeze(dim=0).cuda()
+    for i in range(max_len - 1):
+        newPs = []
+        newYs = []
+        newSym = []
+        for j in range(ps.size(0)):
+            p, y, symbol = ps[j], ys[j], symbols[j]
+            out = model.decode(memory, src_mask, Variable(y),
+                               Variable(subsequent_mask(y.size(1)).type_as(src.data)))
+            prob = model.generator(out[:, -1:, :, :])
+            pr, next_words = prob.topk(k=k, dim=-1)
+            newP = pr.squeeze(-2)
+            for jj in range(k):
+                next_word = next_words[:, :, jj]
+                newPs.append(p + (symbol * newP[:, jj]))
+                newYs.append(torch.cat([y, next_word], dim=1))
+                newSym.append((next_word.squeeze(-1) != end_symbol).float() * symbol)
+        newPs = torch.stack(newPs, dim=0)
+        newYs = torch.stack(newYs, dim=0)
+        newSym = torch.stack(newSym, dim=0)
+        ps, index = newPs.topk(k=k, dim=0)
+        ys = newYs.gather(dim=0, index=index.unsqueeze(-1).expand(-1, -1, newYs.size(-1)))
+        symbols = newSym.gather(dim=0, index=index)
+    _, index = ps.topk(k=1, dim=0)
+    y = ys.gather(dim=0, index=index.unsqueeze(-1).expand(-1, -1, ys.size(-1))).squeeze(0)
+    return y
+
+
+def greedy_decode(model, src, src_mask, max_len, start_symbol, end_symbol):
     batch = src.size(0)
     memory = model.encode(src, src_mask)
     ys = torch.ones(batch, 1).fill_(start_symbol).type_as(src.data)
@@ -70,7 +103,7 @@ def bleu(outs, trgs):
             reference = [tmp]
             tmp1 = sentence_bleu(reference, candidate, weights=(1, 0, 0, 0))
             tmp2 = sentence_bleu(reference, candidate, weights=(0.5, 0.5, 0, 0))
-            tmp3 = sentence_bleu(reference, candidate, weights=(1/3, 1/3, 1/3, 0))
+            tmp3 = sentence_bleu(reference, candidate, weights=(1 / 3, 1 / 3, 1 / 3, 0))
             tmp4 = sentence_bleu(reference, candidate, weights=(0.25, 0.25, 0.25, 0.25))
             bleu_value1 = bleu_value1 + tmp1
             bleu_value2 = bleu_value2 + tmp2
@@ -80,15 +113,16 @@ def bleu(outs, trgs):
 
 
 if __name__ == "__main__":
+    dataset = Dataset("iwslt")
     model = torch.load("./models_2/10.pkl")
     model.cuda()
     model.eval()
-    BATCH_SIZE = 300
-    pad_idx = TGT.vocab.stoi["<blank>"]
+    BATCH_SIZE = 10
+    pad_idx = dataset.tgt_vocab.stoi["<blank>"]
     # valid_iter = MyIterator(val, batch_size=BATCH_SIZE, device=torch.device(0),
     #                         repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
     #                         batch_size_fn=batch_size_fn, train=False)
-    test_iter = MyIterator(test, batch_size=BATCH_SIZE, device=torch.device(0),
+    test_iter = MyIterator(dataset.test, batch_size=BATCH_SIZE, device=torch.device(0),
                            repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
                            batch_size_fn=batch_size_fn, train=False)
     outs = []
@@ -100,7 +134,8 @@ if __name__ == "__main__":
         src_mask = batch.src_mask
         trg = batch.trg
 
-        out = greedy_decode(model, src, src_mask, max_len=60, start_symbol=TGT.vocab.stoi["<s>"])
+        out = beam_search(model, src, src_mask, max_len=60, start_symbol=dataset.tgt_vocab.stoi["<s>"],
+                          end_symbol=dataset.tgt_vocab.stoi["</s>"])
         translation(src, out, trg)
         outs.append(out)
         trgs.append(trg)

@@ -51,116 +51,6 @@ class MultiHeadedAttention(nn.Module):
         return self.linears_last(x)
 
 
-class MultiHeadedAttention1(nn.Module):
-    def __init__(self, h, d_k, d_model, dropout=0.1):
-        super(MultiHeadedAttention1, self).__init__()
-        # assert d_model % h == 0
-        # We assume d_v always equals d_k
-        self.d_k = d_k
-        self.d_model = d_model
-        self.h = h
-        self.linears = clones(nn.Linear(d_model, h*d_k), 3)
-        self.attn = None
-        self.dropout = nn.Dropout(p=dropout)
-        self.choices = clones(nn.Linear(self.d_k, d_model), h)
-        # self.choices_parm = nn.Parameter(torch.ones(self.h, self.d_model))
-        # self.choices_bias = nn.Parameter(torch.zeros(self.d_model))
-        # self.choices = nn.Parameter(torch.Tensor(1, 1, self.h, self.d_model, self.d_k))
-        # self.choices_bias = nn.Parameter(torch.Tensor(h, self.d_model))
-
-    def forward(self, query, key, value, mask=None):
-        if mask is not None:
-            mask = mask.unsqueeze(1)
-        nbatches = query.size(0)
-        query, key, value = \
-            [l(x).view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
-             for l, x in zip(self.linears, (query, key, value))]
-        x, self.attn = attention(query, key, value, mask=mask,
-                                 dropout=self.dropout)
-
-        # x (b, h, l, d_k)
-        x = x.split(1, 1)
-        x = [l(a).view(nbatches, -1, self.d_model) for l, a in zip(self.choices, x)]
-        x = torch.stack(x, dim=-1)
-        x0 = x.abs()
-        x1 = x0.max(dim=-1)[0]
-        x2 = (x0/(x1.unsqueeze(-1)+1e-2)*x).sum(dim=-1)
-        # print(x1.size(), x2.size())
-        return x2
-
-        # x = x.view(nbatches, -1, self.h, self.d_k, 1)
-        # print(x.size())
-        # c = self.choices.expand(nbatches, x.size(1), -1, -1, -1)
-        # print(c.size(), type(c))
-        # x = torch.matmul(c, x)\
-        #     .view(nbatches, -1, self.h, self.d_model)
-        # x = (x+self.choices_bias).max(dim=-2)[0]
-        # return x
-
-
-class MultiHeadedAttention2(nn.Module):
-    def __init__(self, h, d_k, d_model, dropout=0.1):
-        super(MultiHeadedAttention2, self).__init__()
-        # assert d_model % h == 0
-        # We assume d_v always equals d_k
-        self.d_k = d_k
-        self.d_model = d_model
-        self.h = h
-        self.linears = clones(nn.Linear(d_model, h*d_k), 3)
-        self.linears_last = nn.Linear(h*d_k, d_model)
-        self.attn = None
-        self.dropout = nn.Dropout(p=dropout)
-        self.midLinears = clones(nn.Linear(self.d_k, self.d_k), h)
-
-    def forward(self, query, key, value, mask=None):
-        if mask is not None:
-            mask = mask.unsqueeze(1)
-        nbatches = query.size(0)
-        query, key, value = \
-            [l(x).view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
-             for l, x in zip(self.linears, (query, key, value))]
-        x, self.attn = attention(query, key, value, mask=mask,
-                                 dropout=self.dropout)
-
-        # x (b, h, l, d_k)
-        x = x.split(1, 1)
-        x = [l(a) for l, a in zip(self.midLinears, x)]
-        x = torch.stack(x, dim=-2).view(nbatches, -1, self.h * self.d_k)
-        return self.linears_last(x)
-
-
-class MultiHeadedAttention3(nn.Module):
-    def __init__(self, h, d_k, d_model, dropout=0.1):
-        super(MultiHeadedAttention1, self).__init__()
-        # assert d_model % h == 0
-        # We assume d_v always equals d_k
-        self.d_k = d_k
-        self.d_model = d_model
-        self.h = h
-        self.linears = clones(nn.Linear(d_model, h*d_k), 3)
-        self.attn = None
-        self.dropout = nn.Dropout(p=dropout)
-        self.choices = clones(nn.Linear(self.d_k, d_model), h)
-        # self.choices = nn.Parameter(torch.Tensor(1, 1, self.h, self.d_model, self.d_k))
-        # self.choices_bias = nn.Parameter(torch.Tensor(h, self.d_model))
-
-    def forward(self, query, key, value, mask=None):
-        if mask is not None:
-            mask = mask.unsqueeze(1)
-        nbatches = query.size(0)
-        query, key, value = \
-            [l(x).view(nbatches, -1, self.h, self.d_k).transpose(1, 2)
-             for l, x in zip(self.linears, (query, key, value))]
-        x, self.attn = attention(query, key, value, mask=mask,
-                                 dropout=self.dropout)
-
-        # x (b, h, l, d_k)
-        x = x.split(1, 1)
-        x = [l(a).view(nbatches, -1, self.d_model) for l, a in zip(self.choices, x)]
-        x = F.celu(torch.stack(x, dim=-1)).sum(dim=-1)
-        return x
-
-
 class PositionwiseFeedForward(nn.Module):
 
     def __init__(self, d_model, d_ff, dropout=0.1):
@@ -260,16 +150,18 @@ class EncoderLayer(nn.Module):
 
 class Decoder(nn.Module):
 
-    def __init__(self, layer, N):
+    def __init__(self, layer, N, W):
         super(Decoder, self).__init__()
+        self.W = W
         self.layers = clones(layer, N)
         self.norm = LayerNorm(layer.size)
 
     def forward(self, x, memory, src_mask, tgt_mask):
         ys = []
-        for layer in self.layers:
+        for w, layer in zip(self.W, self.layers):
             x = layer(x, memory, src_mask, tgt_mask)
-            ys.append(x)
+            if w != 0:
+                ys.append(x)
         ys = torch.stack(ys, dim=-2)
         return ys
 
@@ -321,12 +213,11 @@ class EncoderDecoder(nn.Module):
 class Generator(nn.Module):
     "Define standard linear + softmax generation step."
 
-    def __init__(self, d_model, vocab, N):
+    def __init__(self, d_model, vocab, W):
         super(Generator, self).__init__()
         self.proj = nn.Linear(d_model, vocab)
-        k = [math.log(i+1, 2) for i in range(N)]
-        k = torch.Tensor(k).cuda()
-        self.k = Variable((k / k.sum()).unsqueeze(-1).unsqueeze(0).unsqueeze(0))
+        k = Variable(torch.Tensor(W).unsqueeze(-1), requires_grad=False)
+        self.register_buffer('k', k)
 
     def forward(self, x):
         x = self.proj(x)
@@ -334,31 +225,28 @@ class Generator(nn.Module):
         return F.log_softmax(x, dim=-1)
 
 
-def make_model(src_vocab, tgt_vocab, t=0, N=6,
-               d_k=64, d_model=512, d_ff=2048, h=8, dropout=0.1):
+def make_model(src_vocab, tgt_vocab, N=4, W=[0, 1/6, 1/3, 1/2],
+               d_k=64, d_model=512, d_ff=2048, h=8, dropout=0.1, sharedEmbeddings=False):
     """Helper: Construct a model from hyperparameters."""
+    assert len(W) == N
     c = copy.deepcopy
-    if t == 0:
-        attn = MultiHeadedAttention(h, d_k, d_model)
-    elif t == 1:
-        attn = MultiHeadedAttention1(h, d_k, d_model)
-    elif t == 2:
-        attn = MultiHeadedAttention2(h, d_k, d_model)
-    else:
-        attn = MultiHeadedAttention3(h, d_k, d_model)
+    attn = MultiHeadedAttention(h, d_k, d_model)
     ff = PositionwiseFeedForward(d_model, d_ff, dropout)
     position = PositionalEncoding(d_model, dropout)
     model = EncoderDecoder(
         Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout), N),
         Decoder(DecoderLayer(d_model, c(attn), c(attn),
-                             c(ff), dropout), N),
+                             c(ff), dropout), N, W),
         nn.Sequential(Embeddings(d_model, src_vocab), c(position)),
         nn.Sequential(Embeddings(d_model, tgt_vocab), c(position)),
-        Generator(d_model, tgt_vocab, N)
+        Generator(d_model, tgt_vocab, W)
     )
     for p in model.parameters():
         if p.dim() > 1:
             nn.init.xavier_uniform_(p)
+    if sharedEmbeddings:
+        model.src_embed[0].lut.weight = model.src_embed[0].lut.weight
+        model.generator.proj.weight = model.src_embed[0].lut.weight
     return model
 
 
