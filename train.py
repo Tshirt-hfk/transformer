@@ -113,7 +113,7 @@ class SimpleLossCompute:
 
 def start_train():
     dataset = Dataset(dataset="iwslt")
-    pad_idx = dataset.TGT_VOCAB.stoi[dataset.BLANK_WORD]
+    pad_idx = dataset.tgt_vocab.stoi[dataset.BLANK_WORD]
     if False:
         print("loading model!")
         model = torch.load("./models/205.pkl")
