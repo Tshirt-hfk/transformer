@@ -25,7 +25,7 @@ def attention(query, key, value, mask=None, dropout=None):
 
 
 class MultiHeadedAttention(nn.Module):
-    def __init__(self, h, d_k, d_model, dropout=0.1):
+    def __init__(self, h, d_k, d_model, dropout=0.0):
         super(MultiHeadedAttention, self).__init__()
         # We assume d_v always equals d_k
         self.d_k = d_k
@@ -34,7 +34,7 @@ class MultiHeadedAttention(nn.Module):
         self.linears = clones(nn.Linear(d_model, h*d_k), 3)
         self.linears_last = nn.Linear(h*d_k, d_model)
         self.attn = None
-        self.dropout = nn.Dropout(p=dropout)
+        self.dropout = nn.Dropout(p=dropout) if dropout>0 else None
 
     def forward(self, query, key, value, mask=None):
         if mask is not None:
@@ -157,13 +157,10 @@ class Decoder(nn.Module):
         self.norm = LayerNorm(layer.size)
 
     def forward(self, x, memory, src_mask, tgt_mask):
-        ys = []
         for w, layer in zip(self.W, self.layers):
             x = layer(x, memory, src_mask, tgt_mask)
-            if w != 0:
-                ys.append(x)
-        ys = torch.stack(ys, dim=-2)
-        return ys
+        x = self.norm(x)
+        return x
 
 
 class DecoderLayer(nn.Module):
@@ -185,10 +182,6 @@ class DecoderLayer(nn.Module):
 
 
 class EncoderDecoder(nn.Module):
-    """
-	A standard Encoder-Decoder architecture. Base for this and many 
-    other models.
-	"""
 
     def __init__(self, encoder, decoder, src_embed, tgt_embed, generator):
         super(EncoderDecoder, self).__init__()
@@ -213,22 +206,18 @@ class EncoderDecoder(nn.Module):
 class Generator(nn.Module):
     "Define standard linear + softmax generation step."
 
-    def __init__(self, d_model, vocab, W):
+    def __init__(self, d_model, vocab):
         super(Generator, self).__init__()
         self.proj = nn.Linear(d_model, vocab)
-        k = Variable(torch.Tensor(W).unsqueeze(-1), requires_grad=False)
-        self.register_buffer('k', k)
 
     def forward(self, x):
         x = self.proj(x)
-        x = (self.k*x).sum(dim=-2)
         return F.log_softmax(x, dim=-1)
 
 
-def make_model(src_vocab, tgt_vocab, N=4, W=[0, 1/6, 1/3, 1/2],
-               d_k=64, d_model=512, d_ff=2048, h=8, dropout=0.1, sharedEmbeddings=False):
+def make_model(src_vocab, tgt_vocab, N=6,
+               d_k=64, d_model=512, d_ff=1024, h=8, dropout=0.3, sharedEmbeddings=False):
     """Helper: Construct a model from hyperparameters."""
-    assert len(W) == N
     c = copy.deepcopy
     attn = MultiHeadedAttention(h, d_k, d_model)
     ff = PositionwiseFeedForward(d_model, d_ff, dropout)
@@ -236,10 +225,10 @@ def make_model(src_vocab, tgt_vocab, N=4, W=[0, 1/6, 1/3, 1/2],
     model = EncoderDecoder(
         Encoder(EncoderLayer(d_model, c(attn), c(ff), dropout), N),
         Decoder(DecoderLayer(d_model, c(attn), c(attn),
-                             c(ff), dropout), N, W),
+                             c(ff), dropout), N),
         nn.Sequential(Embeddings(d_model, src_vocab), c(position)),
         nn.Sequential(Embeddings(d_model, tgt_vocab), c(position)),
-        Generator(d_model, tgt_vocab, W)
+        Generator(d_model, tgt_vocab)
     )
     for p in model.parameters():
         if p.dim() > 1:

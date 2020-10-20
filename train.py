@@ -118,7 +118,7 @@ def start_train():
         print("loading model!")
         model = torch.load("./models/205.pkl")
     else:
-        model = make_model(len(dataset.src_vocab), len(dataset.tgt_vocab), N=4, h=8, d_k=64, sharedEmbeddings=False)
+        model = make_model(len(dataset.src_vocab), len(dataset.tgt_vocab), N=6, h=8, d_k=64, sharedEmbeddings=False)
     model.cuda()
     criterion = LabelSmoothing(size=len(dataset.tgt_vocab), padding_idx=pad_idx, smoothing=0.1)
     criterion.cuda()
